@@ -2,6 +2,7 @@ import os
 import tkinter as tk
 
 from theme import BG, FG, DIM, FONT
+from scanner import disk_info
 
 class FolderPicker:
     def __init__(self, parent, initial_path, on_select):
@@ -14,6 +15,7 @@ class FolderPicker:
         self.window.geometry("700x480")
         self.window.configure(bg=BG)
         self.window.transient(parent)
+        self.window.wait_visibility()
         self.window.grab_set()
 
         self.window.bind(
@@ -26,7 +28,7 @@ class FolderPicker:
             text="SELECT TARGET DIRECTORY",
             bg=BG,
             fg=FG,
-            font=("Consolas", 14, "bold"),
+            font=("FONT[0]", 14, "bold"),
         ).pack(anchor="w", padx=16, pady=(16, 4))
 
         self.path_label = tk.Label(
@@ -119,14 +121,38 @@ class FolderPicker:
     def get_drives(self):
         drives = []
 
-        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-            drive = f"{letter}:\\"
+        # Jika dijalankan di Windows
+        if os.name == "nt":
+            for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                drive = f"{letter}:\\"
+                if os.path.exists(drive):
+                    drives.append(drive)
+            return drives
 
-            if os.path.exists(drive):
-                drives.append(drive)
+        #Jika dijalankan di Linux / macOS
+        drives.append("/")
+
+        home = os.path.expanduser("~")
+        if os.path.isdir(home) and home != "/":
+            drives.append(home)
+
+        # Cek lokasi mount point ummum di Linux (/run/media/<user>, /media/<user>, /mnt)
+        user = os.environ.get("USER", "")
+        mount_roots = ["/mnt", "/media"]
+        if user:
+            mount_roots = [f"/run/media/{user}", f"/media/{user}"] + mount_roots
+
+        for root in mount_roots:
+            if os.path.isdir(root):
+                try:
+                    with os.scandir(root) as entries:
+                        for entry in entries:
+                            if entry.is_dir(follow_symlinks=False) and entry.path not in drives:
+                                drives.append(entry.path)
+                except OSError:
+                    continue
 
         return drives
-
 
     def show_drives(self):
         self.current_path = None
@@ -138,9 +164,10 @@ class FolderPicker:
         self.items = self.get_drives()
 
         for drive in self.items:
+            info = disk_info(drive)
             self.listbox.insert(
                 tk.END,
-                f"[DRIVE] {drive}",
+                f"[DRIVE] {drive} - {info}",
         )
 
     def refresh(self):
