@@ -2,10 +2,12 @@ import os
 import queue
 import threading
 import tkinter as tk
+from tkinter import filedialog
 
-from scanner import scan, format_size, make_bar
-from theme import BG, FG, DIM, FONT
+from file_ops import save_to_csv
 from folder_picker import FolderPicker
+from scanner import scan, format_size, make_bar, disk_info
+from theme import BG, FG, DIM, FONT
 
 class MainApp:
     def __init__(self, root):
@@ -27,46 +29,24 @@ class MainApp:
             root, bg=BG, fg=FG, font=FONT, bd=0, highlightthickness=0,
             selectbackground=FG, selectforeground=BG, activestyle="none",
             exportselection=False,
+            height=5,
         )
         self.listbox.pack(fill="both", expand=True, padx=16, pady=(0,8))
 
         self.status = tk.Label(root, text="", bg=BG, fg=DIM, font=FONT, anchor="w")
         self.status.pack(fill="x", padx=16)
         nav = tk.Frame(root, bg=BG)
-        nav.pack(fill="x", padx=16, pady=(0,4), before=self.listbox)
-        self.btn_up = self._button(nav, "[ UP ]", self.go_up)
+        nav.pack(fill="x", padx=16, pady=(6, 2))
         self._button(nav, "[ REFRESH ]", self.refresh_current)
         self._button(nav, "[ CLEAR ]", self.clear_log)
 
-        bar = tk.Frame(root, bg=BG)
-        bar.pack(fill="x", padx=16, pady=(4,12))
-        self._button(
-            bar,
-            "[1] PINDAI",
-            self.start_scan,
-        )
-
-        self._button(
-            bar,
-            "[2] FILE TERBESAR",
-            self.show_unavailable,
-        )
-
-        self._button(
-            bar,
-            "[3] EKSPOR CSV",
-            self.show_unavailable,
-        )
-
-        self._button(
-            bar,
-            "[0] KELUAR",
-            root.destroy,
-        )
-
-        self.text.config(state="normal")
-        self.text.insert("end", "█", "cursor")
-        self.text.config(state="disabled")
+        tk.Label(
+            nav,
+            text='v1.0',
+            bg=BG,
+            fg=DIM,
+            font=(FONT[0], 9),
+        ).pack(side="right", anchor="s")
 
         self.pending = ""
         self.cursor_on = True
@@ -78,8 +58,7 @@ class MainApp:
         self.cache = {}
 
         root.bind("1", lambda e: self.start_scan())
-        root.bind("2", lambda e: self.show_unavailable())
-        root.bind("3", lambda e: self.show_unavailable())
+        root.bind("2", lambda e: self.export_csv())
         root.bind("0", lambda e: root.destroy())
 
         self.listbox.bind("<Return>", self.enter_selected)
@@ -125,7 +104,7 @@ class MainApp:
             self.root,
             os.getcwd(),
             self.folder_selected,
-    )
+        )
 
 
     def folder_selected(self, folder):
@@ -139,7 +118,7 @@ class MainApp:
             target=self._worker,
             args=(folder,),
             daemon=True,
-    ).start()
+        ).start()
 
     def _worker(self, folder):
         results = scan(folder, on_progress=lambda name: self.events.put(("progress", name)))
@@ -159,10 +138,13 @@ class MainApp:
 
     def _show_results(self, folder, results):
         self.busy = False
-        self.status.config(text=folder)
+        self.status.config(text=f"{folder} | {disk_info(folder)}")
         self._fill_list(folder, results)
         if not results:
             self.say("> FOLDER KOSONG ATAU AKSES DITOLAK\n")
+        else:
+            total_folder = sum(size for _, size in results)
+            self.say(f"> Total Folder: {format_size(total_folder)} | {disk_info(folder)}\n")
 
     def _fill_list(self, folder, results):
         self.current_path = folder
@@ -184,10 +166,33 @@ class MainApp:
     def open_folder(self, path):
         if path in self.cache:
             self._fill_list(path, self.cache[path])
-            self.status.config(text=path)
+            self.status.config(text=f"{path} | {disk_info(path)}")
         elif not self.busy:
             self.busy = True
             threading.Thread(target=self._worker, args=(path,), daemon=True).start()
+
+    def export_csv(self):
+        if self.busy:
+            return
+        if not self.items:
+            self.say("\n? BELUM ADA DATA UNTUK DIEKSPOR\n")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Simpan CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+            initialfile="hasil_scan.csv",
+        )
+        if not filepath:
+            return
+
+        try:
+            save_to_csv(filepath, self.items)
+            self.say(f"\n> Berhasil diekspor ke: {filepath}\n")
+        except OSError as e:
+            self.say(f"\n> Gagal menyimpan CSV: {e}\n")
 
     def enter_selected(self, event=None):
         sel = self.listbox.curselection()
@@ -205,17 +210,16 @@ class MainApp:
         self.open_folder(self.current_path)
 
     def clear_log(self, event=None):
+        if self.busy:
+            return
         self.pending = ""
+        self.root_path = None
+        self.current_path = None
+        self.items = []
+        self.cache = {}
+        self.listbox.delete(0, "end")
+        self.status.config(text="")
         self.show_clickable_menu()
-
-    def _update_nav(self):
-        can_up = self.current_path and self.current_path != self.root_path
-        self.btn_up.config(state="normal" if can_up else "disabled")
-
-    def show_unavailable(self):
-        self.say(
-            "\n> FITUR INI BELUM TERSEDIA\n"
-    )
 
     def show_clickable_menu(self):
         self.text.config(state="normal")
@@ -225,7 +229,6 @@ class MainApp:
             tk.END,
             "=====================================\n"
             "   TERMINAL DISK ANALYZER\n"
-            "   TERMINAL v1.0\n"
             "=====================================\n\n",
             "body",
         )
@@ -238,13 +241,7 @@ class MainApp:
 
         self.text.insert(
             tk.END,
-            "[2] FILE TERBESAR\n",
-            "menu_largest",
-        )
-
-        self.text.insert(
-            tk.END,
-            "[3] EKSPOR CSV\n",
+            "[2] EKSPOR CSV\n",
             "menu_export",
         )
 
@@ -268,7 +265,6 @@ class MainApp:
 
         for tag in (
             "menu_scan",
-            "menu_largest",
             "menu_export",
             "menu_exit",
         ):
@@ -314,15 +310,9 @@ class MainApp:
         )
 
         self.text.tag_bind(
-            "menu_largest",
-            "<Button-1>",
-            lambda event: self.show_unavailable(),
-        )
-
-        self.text.tag_bind(
             "menu_export",
             "<Button-1>",
-            lambda event: self.show_unavailable(),
+            lambda event: self.export_csv(),
         )
 
         self.text.tag_bind(

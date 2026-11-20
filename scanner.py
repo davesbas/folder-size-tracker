@@ -1,6 +1,8 @@
 """Logika pemindaian folder (tanpa tampilan, bisa dipakai ulang)."""
 import os
+import shutil
 
+VIRTUAL_DIRS = {"/proc", "/sys", "/dev"}
 
 def format_size(num_bytes):
     """Ubah byte menjadi KB/MB/GB yang mudah dibaca."""
@@ -30,6 +32,8 @@ def folder_size(path):
                     if entry.is_file():
                         total += entry.stat().st_size
                     elif entry.is_dir():
+                        if entry.path in VIRTUAL_DIRS or os.path.ismount(entry.path):
+                            continue
                         total += folder_size(entry.path)
                 except OSError:
                     continue
@@ -56,6 +60,8 @@ def scan(root, on_progress=None):
             if entry.is_symlink():
                 continue
             if entry.is_dir():
+                if entry.path in VIRTUAL_DIRS or os.path.ismount(entry.path):
+                    continue
                 if on_progress:
                     on_progress(entry.name)
                 results.append((entry.path, folder_size(entry.path)))
@@ -66,3 +72,15 @@ def scan(root, on_progress=None):
 
     results.sort(key=lambda item: item[1], reverse=True)
     return results
+
+def disk_info(path):
+    """Ambil info kapasitas penyimpanan (terpakai, total, sisa) untuk path."""
+    try:
+        total, used, free = shutil.disk_usage(path)
+        pct = (used / total * 100) if total else 0
+        return(
+                f"Terpakai: {format_size(used)} / {format_size(total)} "
+                f"({pct:.1f}%) | Tersedia: {format_size(free)}"
+        )
+    except OSError:
+        return "Info penyimpanan tidak tersedia"
